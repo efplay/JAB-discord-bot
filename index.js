@@ -1,90 +1,80 @@
-import { Client, Events, GatewayIntentBits, REST, Routes } from 'discord.js'
-import dotenv from 'dotenv'
-import { Configuration, OpenAIApi } from 'openai'
-
-dotenv.config()
-
-const token = process.env.DISCORD_TOKEN
-const guildID = '700089396216725625'
-const clientID = '1307964083575980073'
-const openaiApiKey = process.env.OPENAI_API_KEY
+import {
+	Client,
+	GatewayIntentBits,
+	REST,
+	Routes,
+	SlashCommandBuilder,
+} from 'discord.js'
+import 'dotenv/config'
+import { OpenAI } from 'openai'
 
 const client = new Client({
 	intents: [
 		GatewayIntentBits.Guilds,
 		GatewayIntentBits.GuildMessages,
-		GatewayIntentBits.GuildMembers,
 		GatewayIntentBits.MessageContent,
 	],
 })
 
-const commands = [
-	{
-		name: 'ping',
-		description: 'Replies with Pong!',
-	},
-	{
-		name: 'haiku',
-		description: 'Generates a haiku about AI.',
-	},
-]
-
-const rest = new REST({ version: '10' }).setToken(token)
-
-const configuration = new Configuration({
-	apiKey: openaiApiKey,
+const openai = new OpenAI({
+	apiKey: process.env.OPENAI_API_KEY,
+	apiBase: 'https://api.openai.com/v1',
 })
-const openai = new OpenAIApi(configuration)
 
-;(async () => {
+const commands = [
+	new SlashCommandBuilder()
+		.setName('ask')
+		.setDescription('Sends a request to ChatGPT')
+		.addStringOption(option =>
+			option
+				.setName('question')
+				.setDescription('Your question')
+				.setRequired(true)
+		),
+].map(command => command.toJSON())
+
+const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN)
+
+client.once('ready', async () => {
+	console.log(`✅ Bot is running as ${client.user.tag}`)
+
 	try {
-		console.log('Started refreshing application (/) commands.')
-
-		await rest.put(Routes.applicationGuildCommands(clientID, guildID), {
+		await rest.put(Routes.applicationCommands(client.user.id), {
 			body: commands,
 		})
-
-		console.log('Successfully reloaded application (/) commands.')
+		console.log('✅ Commands have been registered!')
 	} catch (error) {
-		console.error('Error while registering commands:', error)
+		console.error('Error registering commands:', error)
 	}
-})()
-
-client.on(Events.ClientReady, readyClient => {
-	console.log(`Logged in as ${readyClient.user.tag}!`)
 })
 
-client.on(Events.InteractionCreate, async interaction => {
-	if (!interaction.isChatInputCommand()) return
+client.on('interactionCreate', async interaction => {
+	if (!interaction.isCommand()) return
 
-	if (interaction.commandName === 'ping') {
-		await interaction.reply('Pong!')
-		console.log('Replied to /ping')
-	}
+	if (interaction.commandName === 'ask') {
+		await interaction.deferReply()
+		const question = interaction.options.getString('question')
 
-	if (interaction.commandName === 'haiku') {
 		try {
-			const response = await openai.createChatCompletion({
-				model: 'gpt-4',
-				messages: [{ role: 'user', content: 'Write a haiku about AI.' }],
+			const completion = await openai.chat.completions.create({
+				model: 'gpt-3.5-turbo',
+				messages: [
+					{ role: 'developer', content: 'You are a helpful assistant.' },
+					{
+						role: 'user',
+						content: 'Write a haiku about recursion in programming.',
+					},
+				],
+				store: true,
 			})
 
-			const haiku = response.data.choices[0].message.content
-			await interaction.reply(haiku) // Ответ пользователю
-			console.log('Replied to /haiku with AI-generated haiku')
+			await interaction.editReply(completion.choices[0].message.content)
+			console.log(response.data.choices)
 		} catch (error) {
-			console.error(
-				'Error fetching response from OpenAI:',
-				error.response?.data || error.message
-			)
-			await interaction.reply('Sorry, I could not generate a haiku right now.')
+			console.error('Error with OpenAI:', error)
+			await interaction.editReply('Error processing the request with OpenAI.')
 		}
 	}
 })
 
-if (!token || !openaiApiKey) {
-	console.error('Error: Missing DISCORD_TOKEN or OPENAI_API_KEY in .env file')
-	process.exit(1)
-}
-
-client.login(token)
+client.login(process.env.DISCORD_TOKEN)
